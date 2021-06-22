@@ -346,20 +346,21 @@ class BiLSTMCRF(nn.Module):
             hidden_size * 2, num_tags)
         self.crf = CRF(num_tags, True)
 
-    def forward(self, sentences, tags, sen_lengths):
+    def forward(self, sentences, tags, mask):
         """
         Args:
             sentences (tensor): sentences, shape (b, len). Lengths are in decreasing order, len is the length
                                 of the longest sentence
             tags (tensor): corresponding tags, shape (b, len)
-            sen_lengths (list): sentence lengths
+            sen_lengths (tensor): shape (b, len).
         Returns:
             loss (tensor): loss on the batch, shape (b,)
         """
-        sentences = sentences.transpose(0, 1)  # shape: (len, b)
-        sentences = self.embedding(sentences)  # shape: (len, b, e)
+        sen_lengths=torch.count_nonzero(mask,dim=1)
+        sentences = self.embedding(sentences)  # shape: (b, len, e)
         emit_score = self.encode(sentences, sen_lengths)  # shape: (b, len, K)
-        loss = self.crf(emit_score, tags)  # shape: (b,)
+
+        loss = self.crf(emit_score, tags, mask=mask.byte())  # shape: (b,)
         return loss
 
     def encode(self, sentences, sent_lengths):
@@ -370,7 +371,7 @@ class BiLSTMCRF(nn.Module):
         Returns:
             emit_score (tensor): emit score, shape (b, len, K)
         """
-        padded_sentences = pack_padded_sequence(sentences, sent_lengths)
+        padded_sentences = pack_padded_sequence(sentences, sent_lengths,batch_first=True,enforce_sorted=False)
         hidden_states, _ = self.encoder(padded_sentences)
         hidden_states, _ = pad_packed_sequence(
             hidden_states, batch_first=True)  # shape: (b, len, 2h)
@@ -379,7 +380,7 @@ class BiLSTMCRF(nn.Module):
         emit_score = self.dropout(emit_score)  # shape: (b, len, K)
         return emit_score
 
-    def predict(self, sentences, sen_lengths):
+    def predict(self, sentences, mask):
         """
         Args:
             sentences (tensor): sentences, shape (b, len). Lengths are in decreasing order, len is the length
@@ -389,23 +390,25 @@ class BiLSTMCRF(nn.Module):
             tags (list[list[str]]): predicted tags for the batch
         """
         # shape: (b, len)
-        sentences = sentences.transpose(0, 1)  # shape: (len, b)
+        sen_lengths=torch.count_nonzero(mask,dim=1)
         sentences = self.embedding(sentences)  # shape: (len, b, e)
         emit_score = self.encode(sentences, sen_lengths)  # shape: (b, len, K)
 
-        tags = self.crf.decode(emit_score)
+        tags = self.crf.decode(emit_score,mask=mask.byte())
 
         return tags
 
 
 def main():
     model = BiLSTMCRF(1000, 10)
-    sentences = torch.randint(0, 1000, (2, 10))
-    tags = torch.randint(0, 10, (2, 10))
-    sent_len=torch.IntTensor([10,10])
-    model(sentences, tags, sent_len)
 
-    model.predict(sentences,sent_len)
+    sentences = torch.randint(0, 1000, (2, 6))
+    tags = torch.randint(0, 10, (2, 6))
+    mask = torch.IntTensor([[1,1,0,0,0,0],[1,1,1,1,1,1]])
+
+    model(sentences, tags, mask)
+
+    model.predict(sentences,mask)
 
 if __name__ == '__main__':
     main()
