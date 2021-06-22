@@ -5,46 +5,67 @@ from preprocess.utils import *
 from model.dataset import LogDataset
 from sklearn.model_selection import train_test_split
 import torch
-from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm, trange
-import numpy as np
 from seqeval.metrics import classification_report, accuracy_score, f1_score
 
-SUBWORD_FILE_PATH='./subword_data.csv'
-DATA_FILE_PATH='./data'
-SUBWORD_TOKENIZER='bert'
+SUBWORD_FILE_PATH = './subword_data.csv'
+DATA_FILE_PATH = './data'
+SUBWORD_TOKENIZER = 'bert'
 MAX_LENGTH = 256
 
 epochs = 2
 max_grad_norm = 1.0
+batch_size = 4
 
 #tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-tokenizer =BertTokenizer.from_pretrained('bert-base-cased')
+tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
 
 if not os.path.exists(SUBWORD_FILE_PATH):
-    subword_tokenize2file(DATA_FILE_PATH,SUBWORD_FILE_PATH,tokenizer)
-df=pd.read_csv(SUBWORD_FILE_PATH,converters={'subword_log':eval,'subword_tag':eval},index_col=0)
+    subword_tokenize2file(DATA_FILE_PATH, SUBWORD_FILE_PATH, tokenizer)
+df = pd.read_csv(SUBWORD_FILE_PATH, converters={
+                 'subword_log': eval, 'subword_tag': eval}, index_col=0)
 
-subword_logs,subword_tags=df['subword_log'].tolist(),df['subword_tag'].tolist()
+subword_logs, subword_tags = df['subword_log'].tolist(
+), df['subword_tag'].tolist()
 
 tag_values = ['<DATE>', '<TIME>', '<LVL>', '<CLS>', '<FUNC>',
               '<HOST>', '<PATH>', '<URL>', '<O>', '<PAD>', 'X']
 tag2idx = {t: i for i, t in enumerate(tag_values)}
 idx2tag = {i: t for t, i in tag2idx.items()}
 
-input_ids = [tokenizer.convert_tokens_to_ids(tokens) for tokens in subword_logs]
-tag_ids = [[tag2idx(t) for t in subword_tag] for subword_tag in subword_tags]
+input_ids = [tokenizer.convert_tokens_to_ids(
+    tokens) for tokens in subword_logs]
+tag_ids = [[tag2idx[t] for t in subword_tag] for subword_tag in subword_tags]
 
 tr_inputs, val_inputs, tr_tags, val_tags = train_test_split(
     input_ids, tag_ids, random_state=1234, test_size=0.1)
 
-train_data = LogDataset(tr_inputs,tr_tags)
-train_sampler = RandomSampler(train_data)
-train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=32)
 
-val_data = LogDataset(val_inputs,val_tags)
+def collate_fn(batch):
+    b_input_ids, b_input_labels = [t[0] for t in batch], [t[1] for t in batch]
+
+    seq_lens = [len(inputs) for inputs in b_input_ids]
+    b_input_masks = len2mask(seq_lens)
+
+    # pad seq in bath to same length
+    max_len = max(seq_lens)
+    b_input_ids = [pad(input_ids, 0, max_len) for input_ids in b_input_ids]
+    b_input_labels = [pad(input_labels, tag2idx['<PAD>'], max_len)
+                      for input_labels in b_input_labels]
+
+    return b_input_ids, b_input_labels, b_input_masks
+
+
+train_data = LogDataset(tr_inputs, tr_tags)
+train_sampler = RandomSampler(train_data)
+train_dataloader = DataLoader(
+    train_data, sampler=train_sampler, batch_size=batch_size, collate_fn=collate_fn)
+
+val_data = LogDataset(val_inputs, val_tags)
 val_sampler = RandomSampler(val_data)
-val_dataloader = DataLoader(val_data, sampler=val_sampler, batch_size=32)
+val_dataloader = DataLoader(
+    val_data, sampler=val_sampler, batch_size=batch_size, collate_fn=collate_fn)
 
 model = BertForTokenClassification.from_pretrained(
     "bert-base-uncased", num_labels=len(tag2idx))
@@ -56,23 +77,18 @@ for _ in trange(epochs, desc="Epoch"):
     tr_loss = 0
     nb_tr_examples, nb_tr_steps = 0, 0
     for step, batch in enumerate(train_dataloader):
-        b_input_ids, b_labels = batch
-
-        # pad seq in bath to same length
-        seq_lens=[len(input_ids) for input_ids in b_input_ids]
-        b_input_ids,b_input_labels=pad(b_input_ids,0,max(seq_lens)),pad(b_input_labels,'<PAD>',max(seq_lens))
-        b_input_mask= len2mask(seq_lens)
+        b_input_ids, b_input_labels, b_input_masks = batch
 
         # to tensor
-        b_input_ids=torch.Tensor(b_input_ids)
-        b_input_labels=torch.Tensor(b_input_labels)
-        b_input_mask = torch.Tensor(b_input_mask)
+        b_input_ids = torch.LongTensor(b_input_ids)
+        b_input_labels = torch.LongTensor(b_input_labels)
+        b_input_masks = torch.LongTensor(b_input_masks)
 
         # forward pass
         outputs = model(input_ids=b_input_ids,
-                             attention_mask=b_input_mask, labels=b_labels)
-        loss=outputs.loss
-        score=outputs.logits
+                        attention_mask=b_input_masks, labels=b_input_labels)
+        loss = outputs.loss
+        score = outputs.logits
         # backward pass
         loss.backward()
         # track train loss
