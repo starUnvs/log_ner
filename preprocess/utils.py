@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import tqdm
 
 def subword_tokenize(logs, tags, tokenizer=None):
     subword_logs = []
@@ -29,7 +30,7 @@ def subword_tokenize2file(inpath,outpath,tokenizer=None):
 
     log = []
     tag = []
-    for anno in log_anno:
+    for anno in tqdm(log_anno):
         tmp_words = [word for word, tag in anno]
         tmp_tags = [tag for word, tag in anno]
         log.append(tmp_words)

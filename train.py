@@ -10,7 +10,7 @@ from tqdm import tqdm, trange
 from seqeval.metrics import classification_report, accuracy_score, f1_score
 
 SUBWORD_FILE_PATH = './subword_data.csv'
-DATA_FILE_PATH = './data'
+DATA_FILE_PATH = './data.csv'
 SUBWORD_TOKENIZER = 'bert'
 MAX_LENGTH = 256
 
@@ -68,7 +68,7 @@ val_dataloader = DataLoader(
     val_data, sampler=val_sampler, batch_size=batch_size, collate_fn=collate_fn)
 
 model = BertForTokenClassification.from_pretrained(
-    "bert-base-uncased", num_labels=len(tag2idx))
+    "bert-base-cased", num_labels=len(tag2idx))
 optimizer = torch.optim.Adam(model.parameters(), lr=3e-5)
 
 for _ in trange(epochs, desc="Epoch"):
