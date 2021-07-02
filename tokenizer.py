@@ -39,7 +39,7 @@ def parse(text):
 	text=pt_func.sub('¯',text)
 	text = pt_num2word.sub(r'\1¯\2',text)
 	text = pt_word2num.sub(r'\1¯\2',text)
-	text = pt_chinese.sub(r'Ĉ')
+	text = pt_chinese.sub(r'Ĉ',text)
 	#text=re.sub('\d',DIG_SYMBOL,text)
 	#text=re.sub(r'://',URL_SPLITER,text)
 
