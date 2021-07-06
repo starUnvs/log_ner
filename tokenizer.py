@@ -44,10 +44,11 @@ def parse(text):
 	#text=re.sub(r'://',URL_SPLITER,text)
 
 	# tokenize
-	pt_sep=re.compile(r'([Ĉ-_\{\}\\.: =,/()?~"%\n。，：+（\]）*&￥$#@!？|;；“”\'<》《>[】【]{1})|¯')
+	pt_sep=re.compile(r'([-_\{\}\\.: =,/()?~"%\n。，：+（\]）*&￥$#@!？|;；“”\'<》《>[】【Ĉ]{1})|¯')
 
 	words=re.split('\s+', text)
-	words=['⸏'+word for word in words[1:]]
+	words=['⸏'+word for word in words]
+	words[0]=words[0][1:]
 	for i in range(len(words)):
 		words[i]=pt_sep.split(words[i])
 		words[i]=[subword for subword in words[i] if subword!=None and subword!='']
@@ -55,6 +56,7 @@ def parse(text):
 	# postprocess
 	pt_num1=re.compile(r'(^⸏?0x[0-9a-fA-F]+$)|((?=.*[0-9])(?=.*[a-fA-F])^⸏?[0-9a-fA-F]+$)')
 	pt_num2=re.compile(r'^⸏?\d{5,}$')
+	pt_random=re.compile(r'')
 	pt_digit=re.compile(r'\d')
 	pt_all_digit=re.compile(r'^⸏?\d+$')
 

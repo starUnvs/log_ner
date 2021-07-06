@@ -2,6 +2,8 @@
 preprocess/__pycache__/utils.cpython-37.pyc
 Untitled-2.ipynb
 deeplog/*
-*.DS_Store
+.DS_Store
 test.ipynb
 *.json
+*.txt
+datasets/Hadoop/.DS_Store
