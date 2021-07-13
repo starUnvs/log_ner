@@ -1,21 +1,21 @@
-import json
 import unicodedata
 from collections import defaultdict
-from glob import glob
+import json
 
 import regex as re
-from tqdm import tqdm
 
-MAX_LEN = 100000
 
-class Tokenizer():
-    def __init__(self, whitespace_token='⸏', digit_token='χ', number_token='<NUM>', chinese_token='Ĉ'):
+class BaseTokenizer():
+    def __init__(self, vocab_file=None, whitespace_token='⸏', digit_token='χ', number_token='<NUM>', chinese_token='Ĉ'):
         self.whitespace_token = whitespace_token
         self.digit_token = digit_token
         self.number_token = number_token
         self.chinese_token = chinese_token
 
         self.vocab_history = defaultdict(set)
+
+        if vocab_file:
+            self.vocab, self.ids_to_tokens = self._load_vocab(vocab_file)
 
     def tokenize(self, text, postprocess=True):
         text = text.strip()
@@ -27,6 +27,12 @@ class Tokenizer():
             tokens = self._postprocess(tokens)
 
         return tokens
+
+    def convert_tokens_to_ids(self, tokens):
+        return [self.vocab.get(token, '<UNK>') for token in tokens]
+
+    def convert_ids_to_tokens(self, ids):
+        return [self.vocab.get(idx, '<UNK>') for idx in ids]
 
     def _preprocess(self, text):
         '''
@@ -89,9 +95,9 @@ class Tokenizer():
                 self.vocab_history['NUM'].add(token)
                 continue
 
-            tokens[i] = pt_random.sub('<UKN>', token)
+            tokens[i] = pt_random.sub('<UNK>', token)
             if tokens[i] != token:
-                self.vocab_history['UKN'].add(token)
+                self.vocab_history['UNK'].add(token)
                 continue
 
             #token = pt_chinese_char.sub(self.chinese_token, token)
@@ -116,36 +122,15 @@ class Tokenizer():
             return True
         return False
 
+    def _load_vocab(self, vocab_path):
+        raw_dict = json.loads(vocab_path)
+        kv_list = sorted(raw_dict.items(), key=lambda x: x[1], reverse=True)
+        vocab = {k: idx for idx, (k, v) in enumerate(kv_list)}
+        ids_to_tokens = {ids: k for k, ids in vocab}
 
-def get_vocab(files):
-    t = Tokenizer()
-
-    vocab = defaultdict(int)
-    for f_path in files:
-        with open(f_path, errors='ignore') as f:
-            print('parsing '+f_path+'...')
-            for line in tqdm(f.readlines()[:MAX_LEN]):
-                words = t.tokenize(line)
-                for word in words:
-                    vocab[word] += 1
-
-        with open('./vocab_tmp.json', 'w') as f:
-            json.dump(vocab, f, ensure_ascii=False)
-    with open('./vocab_his.json', 'w') as f:
-        json.dump(t.vocab_history, f, ensure_ascii=False)
-
-    return vocab
+        return vocab, ids_to_tokens
 
 
 if __name__ == '__main__':
-    # files=glob('/data/logs_data/sys_data/*/*.log')
-    files = glob('./datasets/*/*.log')
-    vocab = get_vocab(files)
-    # vocab=get_vocab(glob('./datasets/kafka/kafka_10k.log'))
-    vocab = {k: v for k, v in sorted(
-        vocab.items(), key=lambda x: x[1], reverse=True)}
-
-    with open('./vocab.json', 'w') as f:
-        json.dump(vocab, f, ensure_ascii=False)
 
     pass

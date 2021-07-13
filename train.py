@@ -1,13 +1,16 @@
 import os
+
 import pandas as pd
-from transformers import BertTokenizer, GPT2Tokenizer, BertForTokenClassification
-from preprocess.utils import *
-from model.dataset import LogDataset
-from sklearn.model_selection import train_test_split
 import torch
+from seqeval.metrics import accuracy_score, classification_report, f1_score
+from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm import tqdm, trange
-from seqeval.metrics import classification_report, accuracy_score, f1_score
+from transformers import (BertForTokenClassification, BertTokenizer,
+                          GPT2Tokenizer)
+
+from model.dataset import LogDataset
+from preprocess.utils import *
 
 SUBWORD_FILE_PATH = './subword_data.csv'
 DATA_FILE_PATH = './data.csv'
