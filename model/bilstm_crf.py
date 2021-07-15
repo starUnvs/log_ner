@@ -293,7 +293,7 @@ class CRF(nn.Module):
             # Set score to the next score if this timestep is valid (mask == 1)
             # and save the index that produces the next score
             # shape: (batch_size, num_tags)
-            score = torch.where(mask[i].unsqueeze(1), next_score, score)
+            score = torch.where(mask[i].unsqueeze(1).bool(), next_score, score)
             history.append(indices)
 
         # End transition score
@@ -346,6 +346,24 @@ class BiLSTMCRF(nn.Module):
             hidden_size * 2, num_tags)
         self.crf = CRF(num_tags, True)
 
+    def encode(self, sentences, sent_lengths):
+        """ BiLSTM Encoder
+        Args:
+            sentences (tensor): sentences with word embeddings, shape (len, b, e)
+            sent_lengths (list): sentence lengths
+        Returns:
+            emit_score (tensor): emit score, shape (b, len, K)
+        """
+        padded_sentences = pack_padded_sequence(
+            sentences, sent_lengths, batch_first=True, enforce_sorted=False)
+        hidden_states, _ = self.encoder(padded_sentences)
+        hidden_states, _ = pad_packed_sequence(
+            hidden_states, batch_first=True)  # shape: (b, len, 2h)
+        emit_score = self.hidden2emit_score(
+            hidden_states)  # shape: (b, len, K)
+        emit_score = self.dropout(emit_score)  # shape: (b, len, K)
+        return emit_score
+
     def forward(self, sentences, tags, mask):
         """
         Args:
@@ -356,29 +374,12 @@ class BiLSTMCRF(nn.Module):
         Returns:
             loss (tensor): loss on the batch, shape (b,)
         """
-        sen_lengths=torch.count_nonzero(mask,dim=1)
+        sen_lengths = torch.count_nonzero(mask, dim=1).tolist()
         sentences = self.embedding(sentences)  # shape: (b, len, e)
         emit_score = self.encode(sentences, sen_lengths)  # shape: (b, len, K)
 
-        loss = self.crf(emit_score, tags, mask=mask.byte())  # shape: (b,)
-        return loss
-
-    def encode(self, sentences, sent_lengths):
-        """ BiLSTM Encoder
-        Args:
-            sentences (tensor): sentences with word embeddings, shape (len, b, e)
-            sent_lengths (list): sentence lengths
-        Returns:
-            emit_score (tensor): emit score, shape (b, len, K)
-        """
-        padded_sentences = pack_padded_sequence(sentences, sent_lengths,batch_first=True,enforce_sorted=False)
-        hidden_states, _ = self.encoder(padded_sentences)
-        hidden_states, _ = pad_packed_sequence(
-            hidden_states, batch_first=True)  # shape: (b, len, 2h)
-        emit_score = self.hidden2emit_score(
-            hidden_states)  # shape: (b, len, K)
-        emit_score = self.dropout(emit_score)  # shape: (b, len, K)
-        return emit_score
+        llk = self.crf(emit_score, tags, mask=mask.byte())  # shape: (b,)
+        return -llk
 
     def predict(self, sentences, mask):
         """
@@ -390,25 +391,27 @@ class BiLSTMCRF(nn.Module):
             tags (list[list[str]]): predicted tags for the batch
         """
         # shape: (b, len)
-        sen_lengths=torch.count_nonzero(mask,dim=1)
+        sen_lengths = torch.count_nonzero(mask, dim=1).tolist()
         sentences = self.embedding(sentences)  # shape: (len, b, e)
         emit_score = self.encode(sentences, sen_lengths)  # shape: (b, len, K)
 
-        tags = self.crf.decode(emit_score,mask=mask.byte())
+        tags = self.crf.decode(emit_score, mask=mask.byte())
 
         return tags
 
 
 def main():
-    model = BiLSTMCRF(1000, 10)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = BiLSTMCRF(1000, 10).to(device)
 
-    sentences = torch.randint(0, 1000, (2, 6))
-    tags = torch.randint(0, 10, (2, 6))
-    mask = torch.IntTensor([[1,1,0,0,0,0],[1,1,1,1,1,1]])
+    sentences = torch.randint(0, 1000, (2, 50)).to(device)
+    tags = torch.randint(0, 10, (2, 50)).to(device)
+    mask = torch.IntTensor([[1]*48+[0, 0], [1]*50]).to(device)
 
     model(sentences, tags, mask)
 
-    model.predict(sentences,mask)
+    model.predict(sentences, mask)
+
 
 if __name__ == '__main__':
     main()

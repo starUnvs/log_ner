@@ -85,7 +85,7 @@ class BaseTokenizer():
         pt_num = re.compile(r'(^0x[0-9a-fA-F]+$)|(^\d{5,}$)')
         pt_random = re.compile(r'(?=(.*\d){2,})(?=.*[a-zA-Z]).*')
 
-        pt_chinese_char = re.compile(r'([\u4e00-\u9fa5])')
+        # pt_chinese_char = re.compile(r'([\u4e00-\u9fa5])')
         pt_all_digit = re.compile(r'^\d+$')
         pt_digit = re.compile(r'\d')
 
@@ -100,9 +100,9 @@ class BaseTokenizer():
                 self.vocab_history['UNK'].add(token)
                 continue
 
-            #token = pt_chinese_char.sub(self.chinese_token, token)
+            # token = pt_chinese_char.sub(self.chinese_token, token)
 
-            if pt_all_digit.match(token) != None:
+            if pt_all_digit.match(token) is not None:
                 tokens[i] = pt_digit.sub(self.digit_token, token)
                 self.vocab_history['DIGIT'].add(token)
 
@@ -123,7 +123,7 @@ class BaseTokenizer():
         return False
 
     def _load_vocab(self, vocab_path):
-        with open(vocab_path,'r') as f:
+        with open(vocab_path, 'r') as f:
             raw_dict = json.load(f)
         kv_list = sorted(raw_dict.items(), key=lambda x: x[1], reverse=True)
         vocab = {k: idx for idx, (k, v) in enumerate(kv_list)}
