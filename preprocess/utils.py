@@ -71,8 +71,7 @@ def subword_tokenize2file(inpath, outpath, tokenizer=None):
 
 
 def pad(l, content, width):
-    l.extend([content] * (width - len(l)))
-    return l
+    return l+[content]*(width-len(l))
 
 
 def flat_accuracy(preds, labels):
