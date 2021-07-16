@@ -5,14 +5,13 @@ import torch
 from seqeval.metrics import classification_report, f1_score
 from seqeval.scheme import IOB2
 from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm, trange
 
 from model.bilstm_crf import BiLSTMCRF
-from model.dataset import LogDataset
-from preprocess.utils import len2mask, pad
+from model.dataset import LogDataset, collate_fn
 
-DATA_FILE_PATH = './datasets/apache/input_ids.csv'
+DATA_FILE_PATH = './inputs/apache.csv'
 VOCAB_PATH = './vocab/vocab_full.json'
 TAG_VOCAB_PATH = './vocab/tag_vocab.json'
 MODEL_SAVE_FILE_PATH = './trained_model/model.pth'
@@ -27,23 +26,6 @@ max_patience, max_decay = 2, 2
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def collate_fn(batch, return_tensor=True):
-    b_input_ids, b_tag_ids = [t[0] for t in batch], [t[1] for t in batch]
-
-    seq_lens = [len(inputs) for inputs in b_input_ids]
-    b_masks = len2mask(seq_lens)
-
-    # pad seq in bath to same length
-    max_len = max(seq_lens)
-    b_input_ids = [pad(input_ids, 0, max_len) for input_ids in b_input_ids]
-    b_tag_ids = [pad(input_labels, 0, max_len) for input_labels in b_tag_ids]
-
-    if return_tensor:
-        return torch.LongTensor(b_input_ids), torch.LongTensor(b_tag_ids), torch.LongTensor(b_masks)
-    else:
-        return b_input_ids, b_tag_ids, b_masks
-
-
 tag2idx: dict
 with open(TAG_VOCAB_PATH, 'r') as f:
     tag2idx = json.load(f)
@@ -52,33 +34,11 @@ vocab: dict
 with open(VOCAB_PATH, 'r') as f:
     vocab = json.load(f)
 
-df = pd.read_csv(DATA_FILE_PATH, converters={
-                 'x_ids': eval, 'y_ids': eval}, index_col=0)
-input_ids, tag_ids = df['x_ids'].tolist(), df['y_ids'].tolist()
 
-tr_inputs, val_inputs, tr_tags, val_tags = train_test_split(
-    input_ids, tag_ids, random_state=1234, test_size=0.1)
-
-train_data = LogDataset(tr_inputs, tr_tags)
-train_sampler = RandomSampler(train_data)
-train_dataloader = DataLoader(
-    train_data, sampler=train_sampler, batch_size=batch_size, collate_fn=collate_fn)
-
-val_data = LogDataset(val_inputs, val_tags)
-val_sampler = RandomSampler(val_data)
-val_dataloader = DataLoader(
-    val_data, sampler=val_sampler, batch_size=batch_size, collate_fn=collate_fn)
-
-model = BiLSTMCRF(len(vocab), len(tag2idx))
-model = model.to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, factor=0.5, verbose=True)
-
-# train loop
-for _ in trange(epochs, desc="Epoch"):
-    count, report_every = 0, 100,
+def train(model, optimizer, train_dataloader):
     model.train()
+
+    report_every = 100
     tr_loss, n_sentences = 0, 0
 
     for step, batch in enumerate(tqdm(train_dataloader)):
@@ -102,19 +62,16 @@ for _ in trange(epochs, desc="Epoch"):
         tr_loss += loss.item()
         n_sentences += b_input_ids.shape[0]
 
-        count += 1
-        if count % report_every == 0:
-            print(f'{count}/{len(train_dataloader)} loss: {tr_loss/n_sentences}')
+        if step % report_every == 0:
+            print(f'{step}/{len(train_dataloader)} loss: {tr_loss/n_sentences}')
 
     print(f'Train Loss: {tr_loss/n_sentences}')
 
-    # VALIDATION on validation set
-    #
+
+def val(model, val_dataloader):
     model.eval()
 
-    val_loss, val_f1, best_val_loss = 0, 0, float('inf')
-    n_sentences = 0
-    patience, decay = 0, 0
+    val_loss, n_sentences = 0, 0
 
     pred_tags, true_tags = [], []
     # one epoch
@@ -152,19 +109,50 @@ for _ in trange(epochs, desc="Epoch"):
         pred_tags.extend([tags[1:-1] for tags in tmp_pred_tags])
         true_tags.extend([tags[1:-1] for tags in tmp_true_tags])
 
-    scheduler.step(val_loss/n_sentences)
-
     print(f'Avg Validation loss: {val_loss/n_sentences}')
     print(f'Validation F1: {f1_score(true_tags,pred_tags,scheme=IOB2)}')
     print(classification_report(true_tags, pred_tags, scheme=IOB2))
 
-    if val_loss/n_sentences < best_val_loss:
-        patience = 0
-        torch.save(model.state_dict(), MODEL_SAVE_FILE_PATH)
-    else:
-        patience += 1
-        if patience == max_patience:
-            print('early stop')
-            exit()
+    return val_loss/n_sentences
 
-pass
+
+if __name__ == '__main__':
+    df = pd.read_csv(DATA_FILE_PATH, converters={
+        'x_ids': eval, 'y_ids': eval}, index_col=0)
+    input_ids, tag_ids = df['x_ids'].tolist(), df['y_ids'].tolist()
+
+    tr_inputs, val_inputs, tr_tags, val_tags = train_test_split(
+        input_ids, tag_ids, random_state=1234, test_size=0.1)
+
+    train_data = LogDataset(tr_inputs, tr_tags)
+    train_sampler = RandomSampler(train_data)
+    train_dataloader = DataLoader(
+        train_data, sampler=train_sampler, batch_size=batch_size, collate_fn=collate_fn)
+
+    val_data = LogDataset(val_inputs, val_tags)
+    val_sampler = RandomSampler(val_data)
+    val_dataloader = DataLoader(
+        val_data, sampler=val_sampler, batch_size=batch_size, collate_fn=collate_fn)
+
+    model = BiLSTMCRF(len(vocab), len(tag2idx)).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, factor=0.5, verbose=True)
+
+    best_val_loss = float('inf')
+    for _ in trange(epochs, desc="Epoch"):
+        train(model, optimizer, train_dataloader)
+        val_loss = val(model, val_dataloader)
+        scheduler.step(val_loss)
+
+        patience, decay = 0, 0
+        if val_loss < best_val_loss:
+            patience = 0
+            torch.save(model.state_dict(), MODEL_SAVE_FILE_PATH)
+        else:
+            patience += 1
+            if patience == max_patience:
+                print('early stop')
+                exit()
+
+    pass
