@@ -5,8 +5,8 @@ from tqdm import tqdm
 
 from preprocess.tokenizer import BaseTokenizer
 
-logfile = './datasets/apache/apache_ds.csv'
-idsfile = './datasets/apache/input_ids.csv'
+logfile = './datasets/spark/spark_ds.csv'
+idsfile = './inputs/spark.csv'
 vocab_file = './vocab/vocab_full.json'
 
 

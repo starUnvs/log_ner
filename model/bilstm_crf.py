@@ -1,7 +1,13 @@
+from typing import List, Optional
+
 import torch
 import torch.nn as nn
+from seqeval.metrics.sequence_labeling import classification_report, f1_score
+from seqeval.scheme import IOB2
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from typing import List, Optional
+from tqdm import tqdm
+
+from preprocess.utils import align_two_seq
 
 
 class CRF(nn.Module):
@@ -398,6 +404,136 @@ class BiLSTMCRF(nn.Module):
         tags = self.crf.decode(emit_score, mask=mask.byte())
 
         return tags
+
+    def _get_slices(self, tags):
+        """merge tags
+
+        Args:
+            tags (list): list of raw tags, e.g: ['B-IP','I-IP']
+
+        Returns:
+            [list]: list of tuple (start, end) indicating word's position
+        """
+        slices = []
+
+        start, end = 0, 1
+        for i, tag in enumerate(tags[1:], 1):
+            if tag[0] != 'I' and tag[0] != 'X':
+                end = i
+                slices.append((start, end))
+                start = i
+        slices.append((start, end+1))
+
+        return slices
+
+    def _merge(self, words, tags, slices):
+        merged_words = []
+        merged_tags = []
+        for start, end in slices:
+            merged_words.append(''.join(words[start:end]))
+            first_tag = tags[start]
+            if first_tag[0] == 'B' or first_tag[0] == 'I':
+                merged_tags.append(first_tag[2:])
+            else:
+                merged_tags.append(first_tag)
+
+        return merged_words, merged_tags
+
+    def test(self, test_dataloader, device, idx2tag, verbose=True, idx2vocab=None, output_file=None):
+        """print classification report
+           return avg loss and f1 score
+
+        Args:
+            test_dataloader (DataLoader): data to be tested
+            idx2tag (dict): map from tag_idx to raw tag
+            device ([type]): cpu or gpu
+            verbose (bool): whether to print in this method
+            output_file (str): output file path
+
+        Returns:
+            [type]: [description]
+        """
+
+        self.eval()
+
+        val_loss, n_sentences = 0, 0
+
+        sent_ids, pred_ids, true_ids = [], [], []
+        # one epoch
+        for batch in tqdm(test_dataloader):
+            b_input_ids, b_tag_ids, b_masks = batch
+
+            # to tensor
+            b_input_ids = b_input_ids.to(device)
+            b_tag_ids = b_tag_ids.to(device)
+            b_masks = b_masks.to(device)
+
+            with torch.no_grad():
+                loss = self(b_input_ids, b_tag_ids, b_masks)
+                b_pred_ids = self.predict(b_input_ids, b_masks)
+
+            # record loss
+            val_loss += loss.item()
+            n_sentences += b_input_ids.shape[0]
+
+            # remove <pad> in true tag ids
+            sen_lengths = torch.count_nonzero(b_masks, dim=1).tolist()
+            b_sent_ids = [ids[:length]
+                          for ids, length in zip(b_input_ids.tolist(), sen_lengths)]
+            b_true_ids = [ids[:length]
+                          for ids, length in zip(b_tag_ids.tolist(), sen_lengths)]
+
+            sent_ids.extend(b_sent_ids)
+            pred_ids.extend(b_pred_ids)
+            true_ids.extend(b_true_ids)
+
+        # ids to tag
+        all_pred_tags = [[idx2tag[idx] for idx in ids] for ids in pred_ids]
+        all_true_tags = [[idx2tag[idx] for idx in ids] for ids in true_ids]
+
+        if output_file:
+            f = open(output_file, 'w')
+
+            sentences = [[idx2vocab[idx] for idx in ids]
+                         for ids in sent_ids]
+
+            for words, pred_tags, true_tags in zip(sentences, all_pred_tags, all_true_tags):
+                pred_slices = self._get_slices(pred_tags)
+                true_slices = self._get_slices(true_tags)
+
+                pred_merged_words, pred_merged_tags = align_two_seq(*self._merge(
+                    words, pred_tags, pred_slices))
+
+                true_merged_words, true_merged_tags = align_two_seq(*self._merge(
+                    words, true_tags, true_slices))
+
+                f.write('||'.join(pred_merged_words)+'\n')
+                f.write('||'.join(pred_merged_tags)+'\n')
+                f.write('||'.join(true_merged_words)+'\n')
+                f.write('||'.join(true_merged_tags)+'\n')
+                f.write('\n')
+            f.close()
+
+        # replace 'X' with 'O'
+        all_pred_tags = [
+            ['O' if tag[0] == 'X' else tag for tag in tags] for tags in all_pred_tags]
+        all_true_tags = [
+            ['O' if tag[0] == 'X' else tag for tag in tags] for tags in all_true_tags]
+
+        avg_loss = val_loss/n_sentences
+        f1 = f1_score(all_true_tags, all_pred_tags)
+
+        if verbose:
+
+            print(f'Avg loss: {avg_loss}')
+            print(f'F1: {f1}')
+            print(classification_report(all_true_tags, all_pred_tags))
+            print(
+                f"F1 STRICT: {f1_score(all_true_tags,all_pred_tags,mode='strict',scheme=IOB2)}")
+            print(classification_report(
+                all_true_tags, all_pred_tags, scheme=IOB2, mode='strict'))
+
+        return val_loss/n_sentences, f1
 
 
 def main():
