@@ -1,4 +1,5 @@
 import pandas as pd
+import unicodedata
 
 
 def pad(seq, content, width):

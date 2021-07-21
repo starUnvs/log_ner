@@ -332,7 +332,7 @@ class CRF(nn.Module):
 
 
 class BiLSTMCRF(nn.Module):
-    def __init__(self, num_vocab, num_tags, dropout_rate=0.5, embed_size=256, hidden_size=256):
+    def __init__(self, embed_size=256, hidden_size=256, dropout_rate=0.5, tokenizer=None, vocab2idx=None, tag2idx=None):
         """ Initialize the model
         Args:
             sent_vocab (Vocab): vocabulary of words
@@ -341,6 +341,16 @@ class BiLSTMCRF(nn.Module):
             hidden_size (int): hidden state size
         """
         super(BiLSTMCRF, self).__init__()
+        self.tokenizer = tokenizer
+
+        self.vocab2idx = vocab2idx
+        self.idx2vocab = {i: key for key, i in vocab2idx.items()}
+        self.tag2idx = tag2idx
+        self.idx2tag = {i: key for key, i in tag2idx.items()}
+
+        num_vocab = len(self.vocab2idx)
+        num_tags = len(self.tag2idx)
+
         self.dropout_rate = dropout_rate
         self.embed_size = embed_size
         self.hidden_size = hidden_size
@@ -352,16 +362,21 @@ class BiLSTMCRF(nn.Module):
             hidden_size * 2, num_tags)
         self.crf = CRF(num_tags, True)
 
-    def encode(self, sentences, sent_lengths):
-        """ BiLSTM Encoder
+    def _lstm_encode(self, b_inputs, b_masks):
+        """forward through embedding layer and bilstm, returns emit_score
+
         Args:
-            sentences (tensor): sentences with word embeddings, shape (len, b, e)
-            sent_lengths (list): sentence lengths
+            b_input_ids (tensor): shape (b, len)
+            b_masks (list[list[int]]): masks, shape (b, len)
+
         Returns:
-            emit_score (tensor): emit score, shape (b, len, K)
+            [tensor]: shape (b, len, K), K is number of tags
         """
+        b_lengths = torch.count_nonzero(b_masks, dim=1).tolist()
+        b_inputs = self.embedding(b_inputs)  # shape: (b, len, e)
+
         padded_sentences = pack_padded_sequence(
-            sentences, sent_lengths, batch_first=True, enforce_sorted=False)
+            b_inputs, b_lengths, batch_first=True, enforce_sorted=False)
         hidden_states, _ = self.encoder(padded_sentences)
         hidden_states, _ = pad_packed_sequence(
             hidden_states, batch_first=True)  # shape: (b, len, 2h)
@@ -370,97 +385,46 @@ class BiLSTMCRF(nn.Module):
         emit_score = self.dropout(emit_score)  # shape: (b, len, K)
         return emit_score
 
-    def forward(self, sentences, tags, mask):
+    def forward(self, b_input_ids, b_tag_ids, b_masks):
         """
         Args:
-            sentences (tensor): sentences, shape (b, len). Lengths are in decreasing order, len is the length
-                                of the longest sentence
-            tags (tensor): corresponding tags, shape (b, len)
-            sen_lengths (tensor): shape (b, len).
+            b_input_ids (tensor): sentences, shape (b, len).
+            b_tag_ids (tensor): corresponding tags, shape (b, len)
+            b_masks (list): shape (b, len).
         Returns:
-            loss (tensor): loss on the batch, shape (b,)
+            loss (tensor): loss on the batch, shape (1,)
         """
-        sen_lengths = torch.count_nonzero(mask, dim=1).tolist()
-        sentences = self.embedding(sentences)  # shape: (b, len, e)
-        emit_score = self.encode(sentences, sen_lengths)  # shape: (b, len, K)
+        emit_score = self._lstm_encode(b_input_ids, b_masks)
 
-        llk = self.crf(emit_score, tags, mask=mask.byte())  # shape: (b,)
+        llk = self.crf(emit_score, b_tag_ids,
+                       mask=b_masks.byte())  # shape: (1,)
         return -llk
 
-    def predict(self, sentences, mask):
+    def _predict(self, b_input_ids, b_masks):
         """
         Args:
-            sentences (tensor): sentences, shape (b, len). Lengths are in decreasing order, len is the length
+            b_input_ids (tensor): sentences, shape (b, len). Lengths are in decreasing order, len is the length
                                 of the longest sentence
-            sen_lengths (list): sentence lengths
+            b_masks (list[list]): masks
         Returns:
-            tags (list[list[str]]): predicted tags for the batch
+            tags (list[list[int]]): predicted index of tags for the batch
         """
-        # shape: (b, len)
-        sen_lengths = torch.count_nonzero(mask, dim=1).tolist()
-        sentences = self.embedding(sentences)  # shape: (len, b, e)
-        emit_score = self.encode(sentences, sen_lengths)  # shape: (b, len, K)
-
-        tags = self.crf.decode(emit_score, mask=mask.byte())
+        emit_score = self._lstm_encode(
+            b_input_ids, b_masks)  # shape: (b, len, K)
+        tags = self.crf.decode(emit_score, mask=b_masks.byte())
 
         return tags
 
-    def _get_slices(self, tags):
-        """merge tags
-
-        Args:
-            tags (list): list of raw tags, e.g: ['B-IP','I-IP']
-
-        Returns:
-            [list]: list of tuple (start, end) indicating word's position
-        """
-        slices = []
-
-        start, end = 0, 1
-        for i, tag in enumerate(tags[1:], 1):
-            if tag[0] != 'I' and tag[0] != 'X':
-                end = i
-                slices.append((start, end))
-                start = i
-        slices.append((start, end+1))
-
-        return slices
-
-    def _merge(self, words, tags, slices):
-        merged_words = []
-        merged_tags = []
-        for start, end in slices:
-            merged_words.append(''.join(words[start:end]))
-            first_tag = tags[start]
-            if first_tag[0] == 'B' or first_tag[0] == 'I':
-                merged_tags.append(first_tag[2:])
-            else:
-                merged_tags.append(first_tag)
-
-        return merged_words, merged_tags
-
-    def test(self, test_dataloader, device, idx2tag, verbose=True, idx2vocab=None, output_file=None):
-        """print classification report
-           return avg loss and f1 score
-
-        Args:
-            test_dataloader (DataLoader): data to be tested
-            idx2tag (dict): map from tag_idx to raw tag
-            device ([type]): cpu or gpu
-            verbose (bool): whether to print in this method
-            output_file (str): output file path
-
-        Returns:
-            [type]: [description]
-        """
+    def test(self, dataloader, verbose=True, output_file=None):
 
         self.eval()
+        device = next(self.parameters()).device
 
         val_loss, n_sentences = 0, 0
 
         sent_ids, pred_ids, true_ids = [], [], []
         # one epoch
-        for batch in tqdm(test_dataloader):
+        for batch in tqdm(dataloader):
             b_input_ids, b_tag_ids, b_masks = batch
 
             # to tensor
@@ -470,7 +434,7 @@ class BiLSTMCRF(nn.Module):
 
             with torch.no_grad():
                 loss = self(b_input_ids, b_tag_ids, b_masks)
-                b_pred_ids = self.predict(b_input_ids, b_masks)
+                b_pred_ids = self._predict(b_input_ids, b_masks)
 
             # record loss
             val_loss += loss.item()
@@ -488,29 +452,28 @@ class BiLSTMCRF(nn.Module):
             true_ids.extend(b_true_ids)
 
         # ids to tag
-        all_pred_tags = [[idx2tag[idx] for idx in ids] for ids in pred_ids]
-        all_true_tags = [[idx2tag[idx] for idx in ids] for ids in true_ids]
+        all_pred_tags = [[self.idx2tag[idx]
+                          for idx in ids] for ids in pred_ids]
+        all_true_tags = [[self.idx2tag[idx]
+                          for idx in ids] for ids in true_ids]
 
         if output_file:
             f = open(output_file, 'w')
 
-            sentences = [[idx2vocab[idx] for idx in ids]
+            sentences = [[self.idx2vocab[idx] for idx in ids]
                          for ids in sent_ids]
 
             for words, pred_tags, true_tags in zip(sentences, all_pred_tags, all_true_tags):
-                pred_slices = self._get_slices(pred_tags)
-                true_slices = self._get_slices(true_tags)
-
                 pred_merged_words, pred_merged_tags = align_two_seq(*self._merge(
-                    words, pred_tags, pred_slices))
+                    words, pred_tags))
 
                 true_merged_words, true_merged_tags = align_two_seq(*self._merge(
-                    words, true_tags, true_slices))
+                    words, true_tags))
 
-                f.write('||'.join(pred_merged_words)+'\n')
-                f.write('||'.join(pred_merged_tags)+'\n')
-                f.write('||'.join(true_merged_words)+'\n')
-                f.write('||'.join(true_merged_tags)+'\n')
+                f.write('||'.join(''.join(pred_merged_words).split())+'\n')
+                f.write('||'.join(''.join(pred_merged_tags).split())+'\n')
+                f.write('||'.join(''.join(true_merged_words).split())+'\n')
+                f.write('||'.join(''.join(true_merged_tags).split())+'\n')
                 f.write('\n')
             f.close()
 
@@ -519,6 +482,10 @@ class BiLSTMCRF(nn.Module):
             ['O' if tag[0] == 'X' else tag for tag in tags] for tags in all_pred_tags]
         all_true_tags = [
             ['O' if tag[0] == 'X' else tag for tag in tags] for tags in all_true_tags]
+
+        # remove <START> and <END>
+        all_pred_tags = [tags[1:-1] for tags in all_pred_tags]
+        all_true_tags = [tags[1:-1] for tags in all_true_tags]
 
         avg_loss = val_loss/n_sentences
         f1 = f1_score(all_true_tags, all_pred_tags)
@@ -535,6 +502,46 @@ class BiLSTMCRF(nn.Module):
 
         return val_loss/n_sentences, f1
 
+    def predict_raw(self, raw_sentences):
+        device = next(self.parameters()).device
+        pad_idx = self.vocab2idx['<UNK>']
+
+        words = ['<START>']+self.tokenizer.tokenize(raw_sentences)+['<END>']
+        input_ids = [self.vocab2idx.get(token, pad_idx) for token in words]
+        mask = [1]*len(input_ids)
+
+        b_input_ids = torch.LongTensor([input_ids]).to(device)
+        b_masks = torch.LongTensor([mask]).to(device)
+
+        tag_ids = self._predict(b_input_ids, b_masks)[0]
+        tags = [self.idx2tag[idx] for idx in tag_ids]
+
+        merged_words, merged_tags = self._merge(words, tags)
+
+        return merged_words, merged_tags
+
+    def _merge(self, words, tags):
+        slices = []
+        start, end = 0, 1
+        for i, tag in enumerate(tags[1:], 1):
+            if tag[0] != 'I' and tag[0] != 'X':
+                end = i
+                slices.append((start, end))
+                start = i
+        slices.append((start, end+1))
+
+        merged_words = []
+        merged_tags = []
+        for start, end in slices:
+            merged_words.append(''.join(words[start:end]))
+            first_tag = tags[start]
+            if first_tag[0] == 'B' or first_tag[0] == 'I':
+                merged_tags.append(first_tag[2:])
+            else:
+                merged_tags.append(first_tag)
+
+        return merged_words, merged_tags
+
 
 def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -546,7 +553,7 @@ def main():
 
     model(sentences, tags, mask)
 
-    model.predict(sentences, mask)
+    model._predict(sentences, mask)
 
 
 if __name__ == '__main__':

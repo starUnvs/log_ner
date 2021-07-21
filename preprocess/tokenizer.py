@@ -17,16 +17,24 @@ class BaseTokenizer():
         if vocab_file:
             self.vocab, self.ids_to_tokens = self._load_vocab(vocab_file)
 
-    def tokenize(self, text, postprocess=True):
-        text = text.strip('\n')
-        text = self._preprocess(text)
+    def _tokenize(self, sentence, postprocess=True):
+        sentence = sentence.strip('\n')
+        sentence = self._preprocess(sentence)
 
-        tokens = self._split(text)
+        tokens = self._split(sentence)
 
         if postprocess:
             tokens = self._postprocess(tokens)
 
         return tokens
+
+    def tokenize(self, text, postprocess=True):
+        if type(text) is list:
+            return [self._tokenize(sent) for sent in text]
+        elif type(text) is str:
+            return self._tokenize(text)
+        else:
+            raise ValueError('type error')
 
     def convert_tokens_to_ids(self, tokens):
         return [self.vocab.get(token, self.vocab['<UNK>']) for token in tokens]
@@ -39,7 +47,7 @@ class BaseTokenizer():
         replace whitespace with token
         insert whitespace to camel case function name, number and word combination, chinese characters
         '''
-        text = text.replace(' ', self.whitespace_token)
+        #text = text.replace(' ', self.whitespace_token)
 
         pt_func = re.compile(
             r'((?<=[a-z])(?=[A-Z]))|((?<=[A-Z])(?=[A-Z][a-z]))')
@@ -49,10 +57,10 @@ class BaseTokenizer():
             r'(?<=[^0-9a-zA-Z]|^)([a-zA-Z]+)(\d+)(?=[^0-9a-zA-Z])|$')
         pt_chinese = re.compile(r'([\u4e00-\u9fa5])')
 
-        text = pt_func.sub(r' ', text)
-        text = pt_num2word.sub(r'\1 \2', text)
-        text = pt_word2num.sub(r'\1 \2', text)
-        text = pt_chinese.sub(r' \1 ', text)
+        text = pt_func.sub(r'^', text)
+        text = pt_num2word.sub(r'\1^\2', text)
+        text = pt_word2num.sub(r'\1^\2', text)
+        text = pt_chinese.sub(r' \1^', text)
 
         return text
 
@@ -64,7 +72,7 @@ class BaseTokenizer():
         output = []
         while i < len(chars):
             char = chars[i]
-            if self._is_punctuation(char) or char == self.whitespace_token:
+            if self._is_punctuation(char) or char == ' ':
                 output.append([char])
                 start_new_word = True
             else:
@@ -75,7 +83,7 @@ class BaseTokenizer():
             i += 1
 
         tokens = ["".join(x) for x in output]
-        return ' '.join(tokens).split()
+        return '^'.join(tokens).split('^')
 
     def _postprocess(self, tokens):
         '''
@@ -133,5 +141,7 @@ class BaseTokenizer():
 
 
 if __name__ == '__main__':
+    t=BaseTokenizer()
+    print(t._is_punctuation(' '))
 
     pass
