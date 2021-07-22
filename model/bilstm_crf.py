@@ -424,7 +424,7 @@ class BiLSTMCRF(nn.Module):
 
         sent_ids, pred_ids, true_ids = [], [], []
         # one epoch
-        for batch in tqdm(dataloader):
+        for batch in dataloader:
             b_input_ids, b_tag_ids, b_masks = batch
 
             # to tensor
@@ -496,10 +496,11 @@ class BiLSTMCRF(nn.Module):
 
             print(f'Avg loss: {avg_loss}')
             print(f'F1: {f1}')
-            print(classification_report(all_true_tags, all_pred_tags))
+            print(classification_report(
+                all_true_tags, all_pred_tags, zero_division=0))
             print(f"F1 STRICT: {f1_strict}")
             print(classification_report(
-                all_true_tags, all_pred_tags, scheme=IOB2, mode='strict'))
+                all_true_tags, all_pred_tags, zero_division=0, scheme=IOB2, mode='strict'))
 
         return val_loss/n_sentences, f1, f1_strict
 

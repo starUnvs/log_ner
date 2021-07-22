@@ -8,3 +8,5 @@ test.ipynb
 .DS_Store
 */DS_Store
 *.out
+*.csv
+/run

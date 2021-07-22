@@ -1,10 +1,10 @@
+import argparse
 import json
 
+import tensorboardX as tb
 import torch
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
-import argparse
-import tensorboardX as tb
 
 from model.bilstm_crf import BiLSTMCRF
 from model.dataset import LogDataset, collate_fn
@@ -12,13 +12,13 @@ from preprocess.tokenizer import BaseTokenizer
 from preprocess.utils import load_data
 
 
-def train(model, optimizer, train_dataloader, val_dataloader, writer, report_every=100):
+def train(model, optimizer, train_dataloader, val_dataloader, writer, epoch, report_every=30):
     model.train()
 
     tr_loss, n_sentences = 0, 0
     best_f1_strict = 0.0
 
-    for step, batch in enumerate(tqdm(train_dataloader), 1):
+    for step, batch in enumerate(tqdm(train_dataloader), epoch*len(train_dataloader)):
         b_input_ids, b_tag_ids, b_masks = batch
 
         # to tensor
@@ -42,12 +42,15 @@ def train(model, optimizer, train_dataloader, val_dataloader, writer, report_eve
         writer.add_scalar('train_loss', loss.item()/b_input_ids.shape[0], step)
 
         if step % report_every == 0:
-            test_loss, f1, f1_strict = model.test(val_dataloader)
+            test_loss, f1, f1_strict = model.test(
+                val_dataloader, verbose=False)
+            model.train()
+
             writer.add_scalar('test_loss', test_loss, step)
             writer.add_scalar('f1', f1, step)
             writer.add_scalar('f1_strict', f1_strict, step)
 
-            scheduler.step(f1_strict)
+            # scheduler.step(test_loss)
 
             if f1_strict > best_f1_strict:
                 torch.save(model, writer.logdir+'/model.pth')
@@ -55,7 +58,6 @@ def train(model, optimizer, train_dataloader, val_dataloader, writer, report_eve
             best_f1_strict = tr_loss/n_sentences
             tr_loss = 0
             n_sentences = 0
-    print(f'Train Loss: {tr_loss/n_sentences}')
 
 
 if __name__ == '__main__':
@@ -99,18 +101,16 @@ if __name__ == '__main__':
                       tokenizer=BaseTokenizer(), vocab2idx=vocab2idx, tag2idx=tag2idx).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, factor=0.5, verbose=True, patience=5)
+        optimizer, mode='max', factor=0.5, verbose=True, patience=10)
 
     result_dir = args.model_dir + \
         f'lr{args.learning_rate}_batch{args.batch_size}_e{args.embedding_size}_h{args.hidden_size}'
     writer = tb.SummaryWriter(result_dir)
 
-    best_val_loss = float('inf')
     for epoch in range(args.epoch):
         print(f'EPOCH: {epoch+1}/{args.epoch}')
 
-        train(model, optimizer, train_dataloader, val_dataloader, writer)
-        val_loss, f1, f1_strict = model.test(val_dataloader, False)
-        scheduler.step(val_loss)
+        train(model, optimizer, train_dataloader,
+              val_dataloader, writer, epoch)
 
     pass
