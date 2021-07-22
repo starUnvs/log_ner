@@ -489,18 +489,19 @@ class BiLSTMCRF(nn.Module):
 
         avg_loss = val_loss/n_sentences
         f1 = f1_score(all_true_tags, all_pred_tags)
+        f1_strict = f1_score(all_true_tags, all_pred_tags,
+                             mode='strict', scheme=IOB2)
 
         if verbose:
 
             print(f'Avg loss: {avg_loss}')
             print(f'F1: {f1}')
             print(classification_report(all_true_tags, all_pred_tags))
-            print(
-                f"F1 STRICT: {f1_score(all_true_tags,all_pred_tags,mode='strict',scheme=IOB2)}")
+            print(f"F1 STRICT: {f1_strict}")
             print(classification_report(
                 all_true_tags, all_pred_tags, scheme=IOB2, mode='strict'))
 
-        return val_loss/n_sentences, f1
+        return val_loss/n_sentences, f1, f1_strict
 
     def predict_raw(self, raw_sentences):
         device = next(self.parameters()).device
