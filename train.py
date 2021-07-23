@@ -71,6 +71,7 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--epoch', type=int, default=5)
     parser.add_argument('-p', '--model_dir', type=str,
                         default='./run/')
+    parser.add_argument('-m', '--mask', type=bool, default=True)
     parser.add_argument('-v2i', '--vocab2idx_path', type=str,
                         default='./vocab/vocab.json')
     parser.add_argument('-t2i', '--tag2idx_path', type=str,
@@ -82,7 +83,16 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    train_data = LogDataset(*load_data(args.train_path))
+    with open(args.vocab2idx_path, 'r') as f:
+        vocab2idx = json.load(f)
+    with open(args.tag2idx_path, 'r') as f:
+        tag2idx = json.load(f)
+
+    if args.mask:
+        train_data = LogDataset(*load_data(args.train_path),
+                                random_mask=True, tag_ids_be_replaced=[tag2idx['O'], tag2idx['X']], repl_id=vocab2idx['<UNK>'], replace=True, max_repl_id=len(vocab2idx)-1)
+    else:
+        train_data = LogDataset(*load_data(args.train_path))
     train_sampler = RandomSampler(train_data)
     train_dataloader = DataLoader(
         train_data, sampler=train_sampler, batch_size=args.batch_size, collate_fn=collate_fn)
@@ -92,11 +102,6 @@ if __name__ == '__main__':
     val_dataloader = DataLoader(
         val_data, sampler=val_sampler, batch_size=args.batch_size, collate_fn=collate_fn)
 
-    with open(args.vocab2idx_path, 'r') as f:
-        vocab2idx = json.load(f)
-    with open(args.tag2idx_path, 'r') as f:
-        tag2idx = json.load(f)
-
     model = BiLSTMCRF(embed_size=args.embedding_size, hidden_size=args.hidden_size,
                       tokenizer=BaseTokenizer(), vocab2idx=vocab2idx, tag2idx=tag2idx).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -104,7 +109,7 @@ if __name__ == '__main__':
         optimizer, mode='max', factor=0.5, verbose=True, patience=10)
 
     result_dir = args.model_dir + \
-        f'lr{args.learning_rate}_batch{args.batch_size}_e{args.embedding_size}_h{args.hidden_size}'
+        f"lr{args.learning_rate}_batch{args.batch_size}_e{args.embedding_size}_h{args.hidden_size}_data({args.test_path.split('/')[-1]})"
     writer = tb.SummaryWriter(result_dir)
 
     for epoch in range(args.epoch):
