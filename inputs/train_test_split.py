@@ -2,7 +2,9 @@ from glob import glob
 import pandas as pd
 
 sample_num = 20000
-file_paths = glob('./*.csv')
+# file_paths = glob('./*.csv')
+file_paths = ['./apache.csv', './hdfs.csv',
+              './kafka.csv', './openstack.csv', 'spark.csv']
 
 trains = []
 tests = []
@@ -14,7 +16,7 @@ for path in file_paths:
     trains.append(train)
     tests.append(test)
 
-pd.concat(trains).to_csv('./train_full.csv')
-pd.concat(tests).to_csv('./test_full.csv')
+pd.concat(trains).to_csv('./train_no_hdfs.csv')
+# pd.concat(tests).to_csv('./test_full.csv')
 
 pass

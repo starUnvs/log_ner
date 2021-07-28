@@ -506,10 +506,10 @@ class BiLSTMCRF(nn.Module):
 
     def predict_raw(self, raw_sentences):
         device = next(self.parameters()).device
-        pad_idx = self.vocab2idx['<UNK>']
+        unk_idx = self.vocab2idx['<UNK>']
 
         words = ['<START>']+self.tokenizer.tokenize(raw_sentences)+['<END>']
-        input_ids = [self.vocab2idx.get(token, pad_idx) for token in words]
+        input_ids = [self.vocab2idx.get(token, unk_idx) for token in words]
         mask = [1]*len(input_ids)
 
         b_input_ids = torch.LongTensor([input_ids]).to(device)
