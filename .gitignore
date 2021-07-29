@@ -2,12 +2,11 @@
 test.ipynb
 *.json
 *.txt
+*.log
 /.vscode
 */__pycache__
 /__pycache__
 .DS_Store
 */DS_Store
 *.out
-*.csv
-/run
 /run*

@@ -1,7 +1,7 @@
 import random
 
 import torch
-from preprocess.utils import len2mask, pad
+from utils import len2mask, pad
 
 
 class LogDataset(torch.utils.data.Dataset):
