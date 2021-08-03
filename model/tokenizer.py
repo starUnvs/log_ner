@@ -6,16 +6,13 @@ import regex as re
 
 
 class BaseTokenizer():
-    def __init__(self, vocab_file=None, whitespace_token='⸏', digit_token='χ', number_token='<NUM>', chinese_token='Ĉ'):
-        self.whitespace_token = whitespace_token
+    def __init__(self, unk_token='<UNK>', digit_token='<d>', number_token='<NUM>', chinese_token='<c>'):
+        self.unk_token = unk_token
         self.digit_token = digit_token
         self.number_token = number_token
         self.chinese_token = chinese_token
 
         self.vocab_history = defaultdict(set)
-
-        if vocab_file:
-            self.vocab, self.ids_to_tokens = self._load_vocab(vocab_file)
 
     def _tokenize(self, sentence, postprocess=True):
         sentence = sentence.strip('\n')
@@ -30,17 +27,11 @@ class BaseTokenizer():
 
     def tokenize(self, text, postprocess=True):
         if type(text) is list:
-            return [self._tokenize(sent) for sent in text]
+            return [self._tokenize(sent,postprocess) for sent in text]
         elif type(text) is str:
-            return self._tokenize(text)
+            return self._tokenize(text,postprocess)
         else:
             raise ValueError('type error')
-
-    def convert_tokens_to_ids(self, tokens):
-        return [self.vocab.get(token, self.vocab['<UNK>']) for token in tokens]
-
-    def convert_ids_to_tokens(self, ids):
-        return [self.ids_to_tokens.get(idx) for idx in ids]
 
     def _preprocess(self, text):
         '''
@@ -52,15 +43,15 @@ class BaseTokenizer():
         pt_func = re.compile(
             r'((?<=[a-z])(?=[A-Z]))|((?<=[A-Z])(?=[A-Z][a-z]))')
         pt_num2word = re.compile(
-            r'(?<=[^0-9a-zA-Z]|^)(\d+)([a-zA-Z]+)(?=[^0-9a-zA-Z])|$')
+            r'(?<=[^0-9a-zA-Z]|^)(\d+)([a-zA-Z]+)(?=[^0-9a-zA-Z]|$)')
         pt_word2num = re.compile(
-            r'(?<=[^0-9a-zA-Z]|^)([a-zA-Z]+)(\d+)(?=[^0-9a-zA-Z])|$')
+            r'(?<=[^0-9a-zA-Z]|^)([a-zA-Z]+)(\d+)(?=[^0-9a-zA-Z]|$)')
         pt_chinese = re.compile(r'([\u4e00-\u9fa5])')
 
         text = pt_func.sub(r'^', text)
         text = pt_num2word.sub(r'\1^\2', text)
         text = pt_word2num.sub(r'\1^\2', text)
-        text = pt_chinese.sub(r' \1^', text)
+        text = pt_chinese.sub(r'\1^', text)
 
         return text
 
@@ -83,7 +74,7 @@ class BaseTokenizer():
             i += 1
 
         tokens = ["".join(x) for x in output]
-        return '^'.join(tokens).split('^')
+        return [token for token in tokens if token != '^']
 
     def _postprocess(self, tokens):
         '''
@@ -103,7 +94,7 @@ class BaseTokenizer():
                 self.vocab_history['NUM'].add(token)
                 continue
 
-            tokens[i] = pt_random.sub('<UNK>', token)
+            tokens[i] = pt_random.sub(self.unk_token, token)
             if tokens[i] != token:
                 self.vocab_history['UNK'].add(token)
                 continue
@@ -112,7 +103,7 @@ class BaseTokenizer():
 
             if pt_all_digit.match(token) is not None:
                 tokens[i] = pt_digit.sub(self.digit_token, token)
-                self.vocab_history['DIGIT'].add(token)
+                self.vocab_history['NUM'].add(token)
 
         return tokens
 
@@ -130,18 +121,10 @@ class BaseTokenizer():
             return True
         return False
 
-    def _load_vocab(self, vocab_path):
-        with open(vocab_path, 'r') as f:
-            raw_dict = json.load(f)
-        kv_list = sorted(raw_dict.items(), key=lambda x: x[1], reverse=True)
-        vocab = {k: idx for idx, (k, v) in enumerate(kv_list)}
-        ids_to_tokens = {ids: k for k, ids in vocab.items()}
-
-        return vocab, ids_to_tokens
-
 
 if __name__ == '__main__':
-    t=BaseTokenizer()
-    print(t._is_punctuation(' '))
+    t = BaseTokenizer()
+    tokens = t.tokenize(
+        '2015-10-18 18:07:30,627 ERROR [RMCommunicator Allocator] org.apache.hadoop.mapreduce.v2.app.rm.RMContainerAllocator: ERROR IN CONTACTING RM.')
 
     pass

@@ -12,7 +12,7 @@ def len2mask(seq_lens):
     return mask
 
 
-def load_data(data_file_path, tokenizer, vocab2idx, tag2idx):
+def load_data(data_file_path):
     """load ner dataset from csv file
 
     Args:
@@ -25,8 +25,7 @@ def load_data(data_file_path, tokenizer, vocab2idx, tag2idx):
     df = pd.read_csv(data_file_path, converters={
         'tokens': eval, 'tags': eval}, index_col=0)
     nwords, ntags = df['tokens'].tolist(), df['tags'].tolist()
-    x_ids, y_ids = create_inputs(nwords, ntags, tokenizer, vocab2idx, tag2idx)
-    return x_ids, y_ids
+    return nwords, ntags
 
 
 def align_two_seq(seq1, seq2):
@@ -36,41 +35,6 @@ def align_two_seq(seq1, seq2):
         seq2[i] = str.ljust(seq2[i], width)
     return seq1, seq2
 
-
-def create_inputs(nwords, ntags, tokenizer, vocab2idx, tag2idx, prefix='B-<START>', suffix='B-<END>'):
-    unk_idx = vocab2idx['UNK']
-    x_inputs, y_inputs = [], []
-    for words, tags in zip(nwords, ntags):
-        x_ids, y_ids = [],[]
-        if prefix:
-            x_ids.append(vocab2idx[prefix])
-            y_ids.append(tag2idx[prefix])
-
-        for word, tag in zip(words, tags):
-            tokens = tokenizer.tokenize(word)
-            x_ids.extend([vocab2idx.get(token, unk_idx) for token in tokens])
-            y_ids.append(tag2idx[tag])
-
-            if len(tokens) == 1:
-                continue
-
-            if tag[0] == 'B' or tag[0] == 'I':
-                post_tag = 'I'+tag[1:]
-            elif tag == 'O':
-                post_tag = 'X'
-            else:
-                raise ValueError("tag value invalid")
-
-            y_ids.extend([tag2idx[post_tag]]*(len(tokens)-1))
-        
-        if suffix:
-            x_ids.append(vocab2idx[suffix])
-            y_ids.append(tag2idx[suffix])
-
-        x_inputs.append(x_ids)
-        y_inputs.append(y_ids)
-
-    return x_inputs, y_inputs
 
 def merge(words, tags):
     slices = []

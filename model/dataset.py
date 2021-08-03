@@ -1,58 +1,84 @@
-import random
-
+import json
+from model.tokenizer import BaseTokenizer
 import torch
-from utils import len2mask, pad
+from .utils import len2mask, load_data, pad
 
 
-class LogDataset(torch.utils.data.Dataset):
-    def __init__(self, x_ids, y_ids, random_mask=False, ratio=0.2, tag_ids_be_replaced=None, repl_id=None, replace=False, max_repl_id=33604):
-        if random_mask:
-            for token_ids, tag_ids in zip(x_ids, y_ids):
-                for i, (token_id, tag_id) in enumerate(zip(token_ids, tag_ids)):
-                    if tag_id in tag_ids_be_replaced and random.random() < ratio:
-                        if replace and random.random() < ratio/4:
-                            token_ids[i] = int(random.random()*max_repl_id)
-                        else:
-                            token_ids[i] = repl_id
+def prepare_pretokenized_data(words, tags, tokenizer, word2idx, char2idx, tag2idx, max_sentence_len=200, max_word_len=30):
+    tokens = []
+    chars = []
+    token_tags = []
 
-        self.x_ids = x_ids
-        self.y_ids = y_ids
+    for word, tag in zip(words, tags):
+        tmp_tokens = tokenizer.tokenize(word)
+        tokens.extend(tmp_tokens)
 
-        if len(x_ids) != len(self.y_ids):
-            raise ValueError("lengths are not equal")
+        origin_tokens = tokenizer.tokenize(word, postprocess=False)
+        chars.extend([list(t) for t in origin_tokens])
+
+        token_tags.append(tag)
+        if len(tmp_tokens) == 1:
+            continue
+
+        if tag[0] == 'B' or tag[0] == 'I':
+            post_tag = 'I'+tag[1:]
+        elif tag == 'O':
+            post_tag = 'X'
+
+        token_tags.extend([post_tag]*(len(tmp_tokens)-1))
+
+    token_ids = [word2idx.get(token, word2idx['<UNK>']) for token in tokens]
+    char_ids = [[char2idx[c] for c in w if c in char2idx]
+                for w in chars]
+    tag_ids = [tag2idx[tag] for tag in token_tags]
+
+    mask = [1]*len(token_ids)+[0]*(max_sentence_len-len(token_ids))
+
+    token_ids = pad(token_ids, 0, max_sentence_len)
+    tag_ids = pad(tag_ids, 0, max_sentence_len)
+    char_ids.extend([[]]*(max_sentence_len-len(char_ids)))
+    for i, seq in enumerate(char_ids):
+        char_ids[i] = pad(seq, 0, max_word_len)
+
+    return token_ids, mask, char_ids, token_ids
+
+
+class LogNERDataset(torch.utils.data.Dataset):
+    def __init__(self, nwords, ntags, tokenizer, word2idx, char2idx, tag2idx):
+        #        self.ntoken_ids, self.nmask, self.nchar_ids, self.ntag_ids = [], [], [], []
+        #        for words, tags in zip(nwords, ntags):
+        #            token_ids, mask, char_ids, tag_ids = prepare_pretokenized_data(
+        #                words, tags, tokenizer, word2idx, char2idx, tag2idx)
+        #            self.ntoken_ids.append(token_ids)
+        #            self.nmask.append(mask)
+        #            self.nchar_ids.append(char_ids)
+        #            self.ntag_ids.append(tag_ids)
+        self.nwords = nwords
+        self.ntags = ntags
+        self.tokenizer = tokenizer
+        self.word2idx = word2idx
+        self.char2idx = char2idx
+        self.tag2idx = tag2idx
 
     def __len__(self):
-        return len(self.x_ids)
+        return len(self.ntoken_ids)
 
     def __getitem__(self, idx):
-        return self.x_ids[idx], self.y_ids[idx]
-
-
-def collate_fn(batch, return_tensor=True, x_pad_idx=0, y_pad_idx=0, max_len=200):
-    b_input_ids, b_tag_ids = [t[0][:max_len]
-                              for t in batch], [t[1][:max_len] for t in batch]
-
-    seq_lens = [len(inputs) for inputs in b_input_ids]
-    b_masks = len2mask(seq_lens)
-
-    # pad seq in bath to same length
-    b_max_len = max(seq_lens)
-    b_input_ids = [pad(input_ids, x_pad_idx, b_max_len)
-                   for input_ids in b_input_ids]
-    b_tag_ids = [pad(input_labels, y_pad_idx, b_max_len)
-                 for input_labels in b_tag_ids]
-
-    if return_tensor:
-        return torch.LongTensor(b_input_ids), torch.LongTensor(b_tag_ids), torch.LongTensor(b_masks)
-    else:
-        return b_input_ids, b_tag_ids, b_masks
+        # return self.ntoken_ids[idx], self.nmask[idx], self.nchar_ids[idx], self.ntag_ids[idx]
+        return prepare_pretokenized_data(self.nwords[idx], self.ntags[idx], self.tokenizer, self.word2idx, self.char2idx, self.tag2idx)
 
 
 if __name__ == '__main__':
-    x = [[1, 1, 1, 2, 2, 2, 3, 3, 3]]
-    y = [[1, 1, 1, 1, 0, 0, 0, 0, 0]]
+    ntokens, ntags = load_data('/home/dell/sid/code/datasets/test_full.csv')
+    tokenizer = BaseTokenizer()
+    with open('/home/dell/sid/code/vocab/vocab.json', 'r') as f:
+        word2idx = json.load(f)
+    with open('/home/dell/sid/code/vocab/tag_vocab.json', 'r') as f:
+        tag2idx = json.load(f)
+    with open('/home/dell/sid/code/vocab/char_vocab.json', 'r') as f:
+        char2idx = json.load(f)
 
-    ds = LogDataset(x, y, random_mask=True, ratio=0.5,
-                    tag_ids_be_replaced=[1], repl_id=9)
+    ds = LogNERDataset(ntokens, ntags, tokenizer, word2idx, char2idx, tag2idx)
+    data = ds[1]
 
     pass
