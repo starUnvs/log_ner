@@ -1,10 +1,12 @@
 import json
+
+from torch.utils.data.dataloader import DataLoader
 from model.tokenizer import BaseTokenizer
 import torch
-from .utils import len2mask, load_data, pad
+from .utils import load_data, pad
 
 
-def prepare_pretokenized_data(words, tags, tokenizer, word2idx, char2idx, tag2idx, max_sentence_len=200, max_word_len=30):
+def prepare_pretokenized_data(words, tags, tokenizer, word2idx, char2idx, tag2idx, max_sentence_len=300, max_word_len=40):
     tokens = []
     chars = []
     token_tags = []
@@ -14,7 +16,7 @@ def prepare_pretokenized_data(words, tags, tokenizer, word2idx, char2idx, tag2id
         tokens.extend(tmp_tokens)
 
         origin_tokens = tokenizer.tokenize(word, postprocess=False)
-        chars.extend([list(t) for t in origin_tokens])
+        chars.extend([list(t)[:max_word_len] for t in origin_tokens])
 
         token_tags.append(tag)
         if len(tmp_tokens) == 1:
@@ -26,6 +28,9 @@ def prepare_pretokenized_data(words, tags, tokenizer, word2idx, char2idx, tag2id
             post_tag = 'X'
 
         token_tags.extend([post_tag]*(len(tmp_tokens)-1))
+    tokens = tokens[:max_sentence_len]
+    chars = chars[:max_sentence_len]
+    token_tags = token_tags[:max_sentence_len]
 
     token_ids = [word2idx.get(token, word2idx['<UNK>']) for token in tokens]
     char_ids = [[char2idx[c] for c in w if c in char2idx]
@@ -40,7 +45,7 @@ def prepare_pretokenized_data(words, tags, tokenizer, word2idx, char2idx, tag2id
     for i, seq in enumerate(char_ids):
         char_ids[i] = pad(seq, 0, max_word_len)
 
-    return token_ids, mask, char_ids, token_ids
+    return token_ids, mask, char_ids, tag_ids
 
 
 class LogNERDataset(torch.utils.data.Dataset):
@@ -53,6 +58,7 @@ class LogNERDataset(torch.utils.data.Dataset):
         #            self.nmask.append(mask)
         #            self.nchar_ids.append(char_ids)
         #            self.ntag_ids.append(tag_ids)
+        super().__init__()
         self.nwords = nwords
         self.ntags = ntags
         self.tokenizer = tokenizer
@@ -61,11 +67,20 @@ class LogNERDataset(torch.utils.data.Dataset):
         self.tag2idx = tag2idx
 
     def __len__(self):
-        return len(self.ntoken_ids)
+        return len(self.nwords)
 
     def __getitem__(self, idx):
         # return self.ntoken_ids[idx], self.nmask[idx], self.nchar_ids[idx], self.ntag_ids[idx]
-        return prepare_pretokenized_data(self.nwords[idx], self.ntags[idx], self.tokenizer, self.word2idx, self.char2idx, self.tag2idx)
+        a, b, c, d = prepare_pretokenized_data(
+            self.nwords[idx], self.ntags[idx], self.tokenizer, self.word2idx, self.char2idx, self.tag2idx)
+        return a, b, c, d
+
+
+def collate(batch):
+    batched_data = list(zip(*batch))
+    a, b, c, d = batched_data
+
+    return torch.LongTensor(a), torch.LongTensor(b), torch.LongTensor(c), torch.LongTensor(d)
 
 
 if __name__ == '__main__':
@@ -79,6 +94,12 @@ if __name__ == '__main__':
         char2idx = json.load(f)
 
     ds = LogNERDataset(ntokens, ntags, tokenizer, word2idx, char2idx, tag2idx)
-    data = ds[1]
+    data = ds[0]
+    dl = DataLoader(ds, batch_size=8, collate_fn=collate)
+    for batch in dl:
+        w, m, c, t = batch
+        w = torch.LongTensor(w)
+
+        pass
 
     pass

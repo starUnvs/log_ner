@@ -27,9 +27,9 @@ class BaseTokenizer():
 
     def tokenize(self, text, postprocess=True):
         if type(text) is list:
-            return [self._tokenize(sent,postprocess) for sent in text]
+            return [self._tokenize(sent, postprocess) for sent in text]
         elif type(text) is str:
-            return self._tokenize(text,postprocess)
+            return self._tokenize(text, postprocess)
         else:
             raise ValueError('type error')
 
@@ -76,7 +76,7 @@ class BaseTokenizer():
         tokens = ["".join(x) for x in output]
         return [token for token in tokens if token != '^']
 
-    def _postprocess(self, tokens):
+    def _postprocess(self, tokens, replace_chinese=True):
         '''
         replace long number with <NUM> and short number with digit_token
         '''
@@ -84,7 +84,7 @@ class BaseTokenizer():
         pt_num = re.compile(r'(^0x[0-9a-fA-F]+$)|(^\d{5,}$)')
         pt_random = re.compile(r'(?=(.*\d){2,})(?=.*[a-zA-Z]).*')
 
-        # pt_chinese_char = re.compile(r'([\u4e00-\u9fa5])')
+        pt_chinese_char = re.compile(r'([\u4e00-\u9fa5])')
         pt_all_digit = re.compile(r'^\d+$')
         pt_digit = re.compile(r'\d')
 
@@ -99,7 +99,8 @@ class BaseTokenizer():
                 self.vocab_history['UNK'].add(token)
                 continue
 
-            # token = pt_chinese_char.sub(self.chinese_token, token)
+            if replace_chinese:
+                token = pt_chinese_char.sub(self.chinese_token, token)
 
             if pt_all_digit.match(token) is not None:
                 tokens[i] = pt_digit.sub(self.digit_token, token)

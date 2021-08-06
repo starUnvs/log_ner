@@ -1,5 +1,7 @@
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import json
 
@@ -17,20 +19,11 @@ class WordWithCharEmbedding(nn.Module):
             num_chars, char_embedding_size, padding_idx=0)
         self.conv = nn.Conv1d(char_embedding_size,
                               char_conv_size, 5, padding='same')
+        self.dropout = nn.Dropout(0.5)
+
+        self._init_char_embedding()
 
     def forward(self, b_word_ids, b_char_ids):
-        #        b_word_ids = []
-        #        b_char_ids = []
-        #        for words in b_input_words:
-        #            b_word_ids.append([self.word2idx[word] for word in words])
-        #            words = [list(word) for word in words]
-        #            char_ids = [self.char2idx[char] for char in word for word in words]
-        #            b_char_ids.append(char_ids)
-        #
-        #        device = next(self.parameters()).device
-        #        b_word_ids = torch.LongTensor(b_word_ids)  # shape: (b, len)
-        #        b_char_ids = torch.LongTensor(b_char_ids)  # shape: (b, len, word_len)
-
         batch_size, seq_len = b_word_ids.shape
         # shape: (b, len, word_embedding_size)
         word_embedding = self.word_embedding(b_word_ids)
@@ -43,7 +36,11 @@ class WordWithCharEmbedding(nn.Module):
         char_embedding, _ = torch.max(char_embedding, axis=1)
         char_embedding = char_embedding.view(batch_size, seq_len, -1)
 
-        return torch.cat([word_embedding, char_embedding], dim=2)
+        return self.dropout(torch.cat([word_embedding, char_embedding], dim=2))
+
+    def _init_char_embedding(self):
+        bias = np.sqrt(3.0 / self.char_embedding.weight.size(1))
+        nn.init.uniform_(self.char_embedding.weight, -bias, bias)
 
 
 class BiLSTMEncoder(nn.Module):
@@ -53,6 +50,8 @@ class BiLSTMEncoder(nn.Module):
                               hidden_size=hidden_size, bidirectional=True)
         self.hidden2emit_score = nn.Linear(hidden_size * 2, num_tags)
         self.dropout = nn.Dropout(0.5)
+
+        self._init_lstm()
 
     def forward(self, b_feats, b_masks):
         b_lengths = torch.count_nonzero(b_masks, dim=1).tolist()
@@ -69,6 +68,70 @@ class BiLSTMEncoder(nn.Module):
         emit_score = self.dropout(emit_score)  # shape: (b, len, K)
         return emit_score
 
+    def _init_lstm(self):
+        input_lstm = self.bilstm
+        # Weights init for forward layer
+        for ind in range(0, input_lstm.num_layers):
+
+            # Gets the weights Tensor from our model, for the input-hidden weights in our current layer
+            weight = eval('input_lstm.weight_ih_l' + str(ind))
+
+            # Initialize the sampling range
+            sampling_range = np.sqrt(
+                6.0 / (weight.size(0) / 4 + weight.size(1)))
+
+            # Randomly sample from our samping range using uniform distribution and apply it to our current layer
+            nn.init.uniform_(weight, -sampling_range, sampling_range)
+
+            # Similar to above but for the hidden-hidden weights of the current layer
+            weight = eval('input_lstm.weight_hh_l' + str(ind))
+            sampling_range = np.sqrt(
+                6.0 / (weight.size(0) / 4 + weight.size(1)))
+            nn.init.uniform_(weight, -sampling_range, sampling_range)
+
+        # We do the above again, for the backward layer if we are using a bi-directional LSTM (our final model uses this)
+        if input_lstm.bidirectional:
+            for ind in range(0, input_lstm.num_layers):
+                weight = eval('input_lstm.weight_ih_l' + str(ind) + '_reverse')
+                sampling_range = np.sqrt(
+                    6.0 / (weight.size(0) / 4 + weight.size(1)))
+                nn.init.uniform_(weight, -sampling_range, sampling_range)
+                weight = eval('input_lstm.weight_hh_l' + str(ind) + '_reverse')
+                sampling_range = np.sqrt(
+                    6.0 / (weight.size(0) / 4 + weight.size(1)))
+                nn.init.uniform_(weight, -sampling_range, sampling_range)
+
+        # Bias initialization steps
+        # We initialize them to zero except for the forget gate bias, which is initialized to 1
+        if input_lstm.bias:
+            for ind in range(0, input_lstm.num_layers):
+                bias = eval('input_lstm.bias_ih_l' + str(ind))
+
+                # Initializing to zero
+                bias.data.zero_()
+
+                # This is the range of indices for our forget gates for each LSTM cell
+                bias.data[input_lstm.hidden_size: 2 *
+                          input_lstm.hidden_size] = 1
+
+                # Similar for the hidden-hidden layer
+                bias = eval('input_lstm.bias_hh_l' + str(ind))
+                bias.data.zero_()
+                bias.data[input_lstm.hidden_size: 2 *
+                          input_lstm.hidden_size] = 1
+
+            # Similar to above, we do for backward layer if we are using a bi-directional LSTM
+            if input_lstm.bidirectional:
+                for ind in range(0, input_lstm.num_layers):
+                    bias = eval('input_lstm.bias_ih_l' + str(ind) + '_reverse')
+                    bias.data.zero_()
+                    bias.data[input_lstm.hidden_size: 2 *
+                              input_lstm.hidden_size] = 1
+                    bias = eval('input_lstm.bias_hh_l' + str(ind) + '_reverse')
+                    bias.data.zero_()
+                    bias.data[input_lstm.hidden_size: 2 *
+                              input_lstm.hidden_size] = 1
+
 
 class CNNEncoder(nn.Module):
     def __init__(self, in_feat_size, conv_size, fc_size, num_tags):
@@ -83,22 +146,50 @@ class CNNEncoder(nn.Module):
                                 kernel_size=3, padding='same')
         self.conv_5 = nn.Conv1d(conv_size, conv_size,
                                 kernel_size=3, padding='same')
-        self.conv = nn.ModuleList(
-            [self.conv_1, self.conv_2, self.conv_3, self.conv_4, self.conv_5])
+        self.conv_6 = nn.Conv1d(conv_size, conv_size,
+                                kernel_size=3, padding='same')
+        self.conv_7 = nn.Conv1d(conv_size, conv_size,
+                                kernel_size=3, padding='same')
+        self.conv = nn.Sequential(
+            nn.Conv1d(in_feat_size, conv_size,
+                      kernel_size=3, padding='same'),
+            nn.BatchNorm1d(conv_size),
+            nn.ReLU(),
+            nn.Conv1d(conv_size, conv_size,
+                      kernel_size=3, padding='same'),
+            nn.BatchNorm1d(conv_size),
+            nn.ReLU(),
+            nn.Conv1d(conv_size, conv_size,
+                      kernel_size=3, padding='same'),
+            nn.BatchNorm1d(conv_size),
+            nn.ReLU(),
+            nn.Conv1d(conv_size, conv_size,
+                      kernel_size=3, padding='same'),
+            nn.BatchNorm1d(conv_size),
+            nn.ReLU(),
+            nn.Conv1d(conv_size, conv_size,
+                      kernel_size=5, padding='same'),
+            nn.BatchNorm1d(conv_size),
+            nn.ReLU(),
+            nn.Conv1d(conv_size, conv_size,
+                      kernel_size=5, padding='same'),
+            nn.BatchNorm1d(conv_size),
+            nn.ReLU()
+        )
 
         self.fc1 = nn.Linear(conv_size, fc_size)
-        self.dropout1 = nn.Dropout()
+        self.dropout1 = nn.Dropout(0.25)
         self.fc2 = nn.Linear(fc_size, fc_size)
-        self.dropout2 = nn.Dropout()
+        self.dropout2 = nn.Dropout(0.5)
         self.fc3 = nn.Linear(fc_size, num_tags)
 
     def forward(self, embed_feat):
         feats = embed_feat.permute(0, 2, 1)
-        for conv in self.conv:
-            feats = conv(feats)
+        feats = self.conv(feats)
         feats = feats.permute(0, 2, 1)
-        feats = self.dropout1(self.fc1(feats))
-        feats = self.dropout2(self.fc2(feats))
+
+        feats = self.dropout1(F.relu(self.fc1(feats)))
+        feats = self.dropout2(F.relu(self.fc2(feats)))
 
         return self.fc3(feats)
 

@@ -84,25 +84,27 @@ class NERModelBase(nn.Module):
         sent_ids, pred_ids, true_ids = [], [], []
         # one epoch
         for batch in dataloader:
-            b_input_ids, b_tag_ids, b_masks = batch
 
-            # to tensor
-            b_input_ids = b_input_ids.to(device)
-            b_tag_ids = b_tag_ids.to(device)
+            b_word_ids, b_masks, b_char_ids, b_tag_ids = batch
+
+            # to device
+            b_word_ids = b_word_ids.to(device)
             b_masks = b_masks.to(device)
+            b_char_ids = b_char_ids.to(device)
+            b_tag_ids = b_tag_ids.to(device)
 
             with torch.no_grad():
-                loss = self(b_input_ids, b_tag_ids, b_masks)
-                b_pred_ids = self._predict(b_input_ids, b_masks)
+                loss = self(b_word_ids, b_masks, b_char_ids, b_tag_ids)
+                b_pred_ids = self._predict(b_word_ids, b_masks, b_char_ids)
 
             # record loss
             val_loss += loss.item()
-            n_sentences += b_input_ids.shape[0]
+            n_sentences += b_word_ids.shape[0]
 
             # remove <pad> in true tag ids
             sen_lengths = torch.count_nonzero(b_masks, dim=1).tolist()
             b_sent_ids = [ids[:length]
-                          for ids, length in zip(b_input_ids.tolist(), sen_lengths)]
+                          for ids, length in zip(b_word_ids.tolist(), sen_lengths)]
             b_true_ids = [ids[:length]
                           for ids, length in zip(b_tag_ids.tolist(), sen_lengths)]
 
@@ -116,35 +118,11 @@ class NERModelBase(nn.Module):
         all_true_tags = [[self.idx2tag[idx]
                           for idx in ids] for ids in true_ids]
 
-        if output_file:
-            f = open(output_file, 'w')
-
-            sentences = [[self.idx2word[idx] for idx in ids]
-                         for ids in sent_ids]
-
-            for words, pred_tags, true_tags in zip(sentences, all_pred_tags, all_true_tags):
-                pred_merged_words, pred_merged_tags = align_two_seq(*self._merge(
-                    words, pred_tags))
-
-                true_merged_words, true_merged_tags = align_two_seq(*self._merge(
-                    words, true_tags))
-
-                f.write('||'.join(''.join(pred_merged_words).split())+'\n')
-                f.write('||'.join(''.join(pred_merged_tags).split())+'\n')
-                f.write('||'.join(''.join(true_merged_words).split())+'\n')
-                f.write('||'.join(''.join(true_merged_tags).split())+'\n')
-                f.write('\n')
-            f.close()
-
         # replace 'X' with 'O'
         all_pred_tags = [
             ['O' if tag[0] == 'X' else tag for tag in tags] for tags in all_pred_tags]
         all_true_tags = [
             ['O' if tag[0] == 'X' else tag for tag in tags] for tags in all_true_tags]
-
-        # remove <START> and <END>
-        all_pred_tags = [tags[1:-1] for tags in all_pred_tags]
-        all_true_tags = [tags[1:-1] for tags in all_true_tags]
 
         avg_loss = val_loss/n_sentences
         f1 = f1_score(all_true_tags, all_pred_tags)
@@ -152,13 +130,10 @@ class NERModelBase(nn.Module):
                              mode='strict', scheme=IOB2)
 
         if verbose:
-
-            print(f'Avg loss: {avg_loss}')
-            print(f'F1: {f1}')
+            print(f'Avg loss: {avg_loss}, F1: {f1}, F1 STRICT: {f1_strict}')
             print(classification_report(
                 all_true_tags, all_pred_tags, zero_division=0))
-            print(f"F1 STRICT: {f1_strict}")
             print(classification_report(
                 all_true_tags, all_pred_tags, zero_division=0, scheme=IOB2, mode='strict'))
 
-        return val_loss/n_sentences, f1, f1_strict
+        return avg_loss, f1, f1_strict
