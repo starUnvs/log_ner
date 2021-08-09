@@ -355,6 +355,6 @@ if __name__ == '__main__':
                       tag2idx=tag2idx, char2idx=char2idx)
     loss = model(word_ids, b_masks, char_ids, tag_ids)
 
-    tags = model.predict_raw('hello world')
+    tags = model.predict_raw('2015-10-19 14:25:45,420 INFO [main] org.apache.hadoop.mapred.MapTask: Processing split: hdfs://msra-sa-41:9000/wordcount2.txt:268435456+134217728')
 
     pass

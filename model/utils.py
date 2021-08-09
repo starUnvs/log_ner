@@ -36,15 +36,26 @@ def align_two_seq(seq1, seq2):
     return seq1, seq2
 
 
+def _get_next_tag(tag):
+    if tag[0] == 'B' or tag[0] == 'I':
+        next_tag = 'I'+tag[1:]
+    elif tag[0] == 'O' or tag[0] == 'X':
+        next_tag = 'X'
+    else:
+        raise ValueError('wrong tag')
+    return next_tag
+
+
 def merge(words, tags):
     slices = []
-    start, end = 0, 1
+    start = 0
+    next_tag = _get_next_tag(tags[start])
     for i, tag in enumerate(tags[1:], 1):
-        if tag[0] != 'I' and tag[0] != 'X':
-            end = i
-            slices.append((start, end))
+        if tag != next_tag:
+            slices.append((start, i))
             start = i
-    slices.append((start, end+1))
+            next_tag = _get_next_tag(tag)
+    slices.append((start, len(tags)))
 
     merged_words = []
     merged_tags = []

@@ -1,12 +1,11 @@
 from abc import abstractmethod
-import json
 
 import torch
 import torch.nn as nn
 from seqeval.metrics.sequence_labeling import classification_report, f1_score
 from seqeval.scheme import IOB2
 
-from model.utils import merge, align_two_seq
+from model.utils import merge
 from model.crf import CRF
 
 
@@ -41,7 +40,7 @@ class NERModelBase(nn.Module):
 
     def _convert_sentence_to_ids(self, raw_sentence):
         tokens = self.tokenizer.tokenize(raw_sentence)
-        raw_tokens = self.tokenizer.tokenize(raw_sentence)
+        raw_tokens = self.tokenizer.tokenize(raw_sentence, postprocess=False)
         chars = [list(w) for w in raw_tokens]
 
         token_ids = [self.word2idx.get(token, self.word2idx['<UNK>'])
